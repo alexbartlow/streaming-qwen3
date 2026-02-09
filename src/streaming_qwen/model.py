@@ -100,7 +100,7 @@ class StreamingMoELayer(nn.Module):
             expert_scores = torch.zeros(num_tokens, device=hidden.device, dtype=hidden.dtype)
             for k in range(self.top_k):
                 k_mask = mask[:, k]
-                expert_scores[k_mask] = scores[k_mask, k]
+                expert_scores[k_mask] = scores[k_mask, k].to(hidden.dtype)
 
             token_hidden = hidden[token_indices]
             expert_out = self._expert_forward(token_hidden, weights)
