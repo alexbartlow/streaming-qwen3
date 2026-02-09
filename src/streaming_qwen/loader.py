@@ -147,23 +147,28 @@ class ModelLoader:
         print(f"  VRAM layers: {sorted(self.placement.vram_layers)}")
         print(f"  RAM layers: {sorted(self.placement.ram_layers)}")
 
-        # Check flash attention
+        # Check flash attention availability
+        self._has_flash_attn = False
         attn_impl = "eager"
         try:
             import flash_attn  # noqa: F401
+            self._has_flash_attn = True
             attn_impl = "flash_attention_2"
-            print("  Flash Attention 2: enabled")
+            print("  Flash Attention 2: available")
         except ImportError:
-            print("  Flash Attention 2: not available")
+            print("  Flash Attention 2: not installed")
 
-        # Load to CPU first
+        # Configure model for FA2 (will be activated when attention moves to CUDA)
+        self.config._attn_implementation = attn_impl
+
+        # Load to CPU first, then move attention to CUDA
         print("  Loading weights to CPU...")
         model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
+            config=self.config,
             torch_dtype=torch.bfloat16,
             device_map="cpu",
             trust_remote_code=True,
-            attn_implementation=attn_impl,
         )
 
         max_context = getattr(self.config, "max_position_embeddings", 131072)
@@ -250,6 +255,10 @@ class ModelLoader:
 
         model.model.norm = model.model.norm.to(self.device)
         model.lm_head = model.lm_head.to(self.device)
+
+        # FA2 is now active (configured in config, attention on CUDA)
+        if self._has_flash_attn:
+            print("  Flash Attention 2: enabled")
 
         self.model = model
 
