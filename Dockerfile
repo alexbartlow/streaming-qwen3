@@ -39,7 +39,7 @@ RUN pip install \
 WORKDIR /app
 
 # Copy package
-COPY pyproject.toml /app/
+COPY pyproject.toml README.md /app/
 COPY src/ /app/src/
 
 # Install package
