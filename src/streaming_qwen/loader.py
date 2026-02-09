@@ -180,9 +180,15 @@ class ModelLoader:
         return self
 
     def _extract_experts(self, model: nn.Module):
-        """Extract expert weights, quantize to FP8, place strategically."""
+        """Extract expert weights, quantize to FP8, place strategically.
+
+        Qwen3 uses fused expert tensors:
+        - gate_up_proj: (num_experts, 2 * intermediate_dim, hidden_dim)
+        - down_proj: (num_experts, hidden_dim, intermediate_dim)
+        """
         num_layers = self.config.num_hidden_layers
         num_experts = self.config.num_experts
+        intermediate_size = self.config.moe_intermediate_size
 
         for layer_idx in range(num_layers):
             layer = model.model.layers[layer_idx]
@@ -191,14 +197,25 @@ class ModelLoader:
                 continue
 
             moe_block = layer.mlp
+            experts_module = moe_block.experts
             experts_dict = {}
 
-            for expert_idx in range(num_experts):
-                expert = moe_block.experts[expert_idx]
+            # Qwen3MoeExperts uses fused tensors: gate_up_proj and down_proj
+            # gate_up_proj shape: (num_experts, 2 * intermediate_dim, hidden_dim)
+            # down_proj shape: (num_experts, hidden_dim, intermediate_dim)
+            gate_up = experts_module.gate_up_proj.data  # (E, 2*I, H)
+            down = experts_module.down_proj.data  # (E, H, I)
 
-                gate_q, gate_s = quantize_to_fp8(expert.gate_proj.weight.data)
-                up_q, up_s = quantize_to_fp8(expert.up_proj.weight.data)
-                down_q, down_s = quantize_to_fp8(expert.down_proj.weight.data)
+            for expert_idx in range(num_experts):
+                # Split gate_up into gate and up projections
+                gate_up_expert = gate_up[expert_idx]  # (2*I, H)
+                gate_proj = gate_up_expert[:intermediate_size, :]  # (I, H)
+                up_proj = gate_up_expert[intermediate_size:, :]  # (I, H)
+                down_proj = down[expert_idx]  # (H, I)
+
+                gate_q, gate_s = quantize_to_fp8(gate_proj)
+                up_q, up_s = quantize_to_fp8(up_proj)
+                down_q, down_s = quantize_to_fp8(down_proj)
 
                 experts_dict[expert_idx] = ExpertWeights(
                     gate_proj=gate_q,
@@ -225,11 +242,9 @@ class ModelLoader:
                     )
                 self.ram_experts[layer_idx] = LayerExperts(experts_dict, "cpu")
 
-            # Clear original weights
-            for expert in moe_block.experts:
-                expert.gate_proj.weight = None
-                expert.up_proj.weight = None
-                expert.down_proj.weight = None
+            # Clear original fused weights
+            experts_module.gate_up_proj = None
+            experts_module.down_proj = None
 
         gc.collect()
         torch.cuda.empty_cache()
