@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .loader import ModelLoader, ExpertWeights
+from .loader import ModelLoader, ExpertWeights, dequantize_from_fp8
 from .cache import ExpertCacheManager
 
 
@@ -111,10 +111,23 @@ class StreamingMoELayer(nn.Module):
         return output
 
     def _expert_forward(self, hidden: torch.Tensor, weights: ExpertWeights) -> torch.Tensor:
-        """output = down_proj(silu(gate_proj(x)) * up_proj(x))"""
-        gate = F.silu(F.linear(hidden, weights.gate_proj))
-        up = F.linear(hidden, weights.up_proj)
-        return F.linear(gate * up, weights.down_proj)
+        """output = down_proj(silu(gate_proj(x)) * up_proj(x))
+
+        Dequantizes FP8 weights on-the-fly if needed.
+        """
+        # Check if weights are FP8 and dequantize
+        if weights.gate_proj.dtype == torch.float8_e4m3fn:
+            gate_w = dequantize_from_fp8(weights.gate_proj, weights.gate_scale)
+            up_w = dequantize_from_fp8(weights.up_proj, weights.up_scale)
+            down_w = dequantize_from_fp8(weights.down_proj, weights.down_scale)
+        else:
+            gate_w = weights.gate_proj
+            up_w = weights.up_proj
+            down_w = weights.down_proj
+
+        gate = F.silu(F.linear(hidden, gate_w))
+        up = F.linear(hidden, up_w)
+        return F.linear(gate * up, down_w)
 
 
 class StreamingMoEModel:
