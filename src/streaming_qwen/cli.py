@@ -157,7 +157,7 @@ def run_benchmark(model: StreamingMoEModel, max_tokens: int):
         _ = model.generate(prompt, max_new_tokens=10)  # Warmup
 
         start = time.perf_counter()
-        output = model.generate(prompt, max_new_tokens=max_tokens, temperature=0)
+        output = model.generate(prompt, max_new_tokens=max_tokens, temperature=0.01)
         elapsed = time.perf_counter() - start
 
         tokens = len(model.tokenizer.encode(output)) - len(model.tokenizer.encode(prompt))
