@@ -249,9 +249,10 @@ class ModelLoader:
                 )
 
             if self.placement.is_vram_layer(layer_idx):
-                # Move experts to VRAM in FP8 (dequantize at inference time)
+                # Move experts to VRAM and dequantize to BF16 for fast inference
+                # These are pinned layers - worth 2x memory for speed
                 for expert_id, weights in experts_dict.items():
-                    experts_dict[expert_id] = weights.to_device(torch.device(self.device), dequantize=False)
+                    experts_dict[expert_id] = weights.to_device(torch.device(self.device), dequantize=True)
                 self.vram_experts[layer_idx] = LayerExperts(experts_dict, "cuda")
             else:
                 # Pin in RAM for fast DMA transfer
