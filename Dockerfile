@@ -23,7 +23,8 @@ RUN python -m pip install --upgrade pip setuptools wheel
 # PyTorch with CUDA 12.4
 RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
-# Flash attention (compiles from source, takes ~10 min)
+# Flash attention build deps + install (compiles from source, takes ~10 min)
+RUN pip install psutil ninja packaging
 RUN pip install flash-attn --no-build-isolation
 
 # Dependencies
