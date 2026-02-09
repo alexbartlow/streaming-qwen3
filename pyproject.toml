@@ -1,0 +1,35 @@
+[project]
+name = "streaming-qwen"
+version = "0.1.0"
+description = "RAM-streamed MoE inference for Qwen3-Coder-30B-A3B on consumer hardware"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.4.0",
+    "transformers>=4.45.0",
+    "accelerate",
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic>=2.0",
+    "optimum-quanto",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[project.scripts]
+streaming-qwen = "streaming_qwen.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/streaming_qwen"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
