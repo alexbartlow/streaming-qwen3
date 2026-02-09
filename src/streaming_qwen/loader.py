@@ -74,15 +74,37 @@ class ExpertWeights:
     up_scale: torch.Tensor
     down_scale: torch.Tensor
 
-    def to_device(self, device: torch.device) -> "ExpertWeights":
-        """Move weights to device, dequantizing to BF16."""
+    def to_device(self, device: torch.device, dequantize: bool = False) -> "ExpertWeights":
+        """Move weights to device. Optionally dequantize to BF16."""
+        if dequantize:
+            return ExpertWeights(
+                gate_proj=dequantize_from_fp8(self.gate_proj.to(device), self.gate_scale.to(device)),
+                up_proj=dequantize_from_fp8(self.up_proj.to(device), self.up_scale.to(device)),
+                down_proj=dequantize_from_fp8(self.down_proj.to(device), self.down_scale.to(device)),
+                gate_scale=self.gate_scale.to(device),
+                up_scale=self.up_scale.to(device),
+                down_scale=self.down_scale.to(device),
+            )
+        else:
+            # Keep in FP8 - dequantize at inference time
+            return ExpertWeights(
+                gate_proj=self.gate_proj.to(device),
+                up_proj=self.up_proj.to(device),
+                down_proj=self.down_proj.to(device),
+                gate_scale=self.gate_scale.to(device),
+                up_scale=self.up_scale.to(device),
+                down_scale=self.down_scale.to(device),
+            )
+
+    def dequantize(self) -> "ExpertWeights":
+        """Dequantize FP8 weights to BF16 in-place."""
         return ExpertWeights(
-            gate_proj=dequantize_from_fp8(self.gate_proj.to(device), self.gate_scale.to(device)),
-            up_proj=dequantize_from_fp8(self.up_proj.to(device), self.up_scale.to(device)),
-            down_proj=dequantize_from_fp8(self.down_proj.to(device), self.down_scale.to(device)),
-            gate_scale=self.gate_scale.to(device),
-            up_scale=self.up_scale.to(device),
-            down_scale=self.down_scale.to(device),
+            gate_proj=dequantize_from_fp8(self.gate_proj, self.gate_scale),
+            up_proj=dequantize_from_fp8(self.up_proj, self.up_scale),
+            down_proj=dequantize_from_fp8(self.down_proj, self.down_scale),
+            gate_scale=self.gate_scale,
+            up_scale=self.up_scale,
+            down_scale=self.down_scale,
         )
 
     @property
@@ -227,10 +249,12 @@ class ModelLoader:
                 )
 
             if self.placement.is_vram_layer(layer_idx):
+                # Move experts to VRAM in FP8 (dequantize at inference time)
                 for expert_id, weights in experts_dict.items():
-                    experts_dict[expert_id] = weights.to_device(torch.device(self.device))
+                    experts_dict[expert_id] = weights.to_device(torch.device(self.device), dequantize=False)
                 self.vram_experts[layer_idx] = LayerExperts(experts_dict, "cuda")
             else:
+                # Pin in RAM for fast DMA transfer
                 for expert_id, weights in experts_dict.items():
                     experts_dict[expert_id] = ExpertWeights(
                         gate_proj=weights.gate_proj.pin_memory(),
@@ -242,9 +266,11 @@ class ModelLoader:
                     )
                 self.ram_experts[layer_idx] = LayerExperts(experts_dict, "cpu")
 
-            # Clear original fused weights
+            # Clear original fused weights and free memory
             experts_module.gate_up_proj = None
             experts_module.down_proj = None
+            del gate_up, down
+            gc.collect()
 
         gc.collect()
         torch.cuda.empty_cache()
